@@ -1,0 +1,32 @@
+[package]
+name = "cybrium-agent"
+version = "0.1.0"
+edition = "2021"
+authors = ["Cybrium AI <eng@cybrium.ai>"]
+description = "Cybrium on-premise security agent — collects sensor data and syncs to the platform"
+license = "Apache-2.0"
+repository = "https://github.com/cybrium-ai/cybrium-agent"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+rusqlite = { version = "0.31", features = ["bundled"] }
+sha2 = "0.10"
+hex = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "5"
+uuid = { version = "1", features = ["v4"] }
+sysinfo = "0.30"
+anyhow = "1"
+libc = "0.2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+codegen-units = 1
