@@ -2,6 +2,7 @@ mod activation;
 mod buffer;
 mod config;
 mod daemon;
+mod dedup;
 mod hardware;
 mod heartbeat;
 mod sensors;
@@ -204,6 +205,17 @@ fn cmd_status() -> anyhow::Result<()> {
         if let Ok(stats) = buffer::stats(&conn) {
             println!();
             println!("Buffer:");
+            println!("  Total:    {}", stats.total);
+            println!("  Unsynced: {}", stats.unsynced);
+            println!("  Synced:   {}", stats.synced);
+        }
+    }
+
+    // Show device inventory stats
+    if let Ok(inv) = dedup::DeviceInventory::new(None) {
+        if let Ok(stats) = inv.stats() {
+            println!();
+            println!("Device Inventory:");
             println!("  Total:    {}", stats.total);
             println!("  Unsynced: {}", stats.unsynced);
             println!("  Synced:   {}", stats.synced);

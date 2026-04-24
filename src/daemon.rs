@@ -1,5 +1,6 @@
 use crate::buffer;
 use crate::config::Config;
+use crate::dedup::{self, DeviceInventory};
 use crate::sensors;
 use crate::sync;
 use crate::heartbeat;
@@ -21,6 +22,9 @@ pub async fn run_daemon(config: &mut Config) -> anyhow::Result<()> {
 
     // Open the local buffer database
     let conn = buffer::open()?;
+
+    // Open the device inventory database
+    let device_inventory = DeviceInventory::new(None)?;
 
     // Discover available sensors
     let available_sensors = sensors::discover_sensors(&config.sensors_enabled);
@@ -65,9 +69,31 @@ pub async fn run_daemon(config: &mut Config) -> anyhow::Result<()> {
                 info!("running sensor sweep");
                 let findings = sensors::run_all_sensors(&available_sensors);
                 if !findings.is_empty() {
+                    // Buffer raw findings for sync
                     match buffer::insert_findings(&conn, &findings) {
                         Ok(n) => info!(buffered = n, "sensor findings buffered"),
                         Err(e) => error!(error = %e, "failed to buffer findings"),
+                    }
+
+                    // Extract device records and upsert into local inventory
+                    let devices = dedup::extract_devices_from_findings(&findings);
+                    if !devices.is_empty() {
+                        let mut new_count = 0usize;
+                        let mut changed_count = 0usize;
+                        for device in &devices {
+                            match device_inventory.upsert_device(device) {
+                                Ok(true) => {
+                                    new_count += 1;
+                                }
+                                Ok(false) => {
+                                    // Unchanged, no action needed
+                                }
+                                Err(e) => error!(mac = %device.mac, error = %e, "failed to upsert device"),
+                            }
+                        }
+                        if new_count > 0 {
+                            info!(new_or_changed = new_count, total_discovered = devices.len(), "device inventory updated");
+                        }
                     }
                 } else {
                     info!("no findings from sensor sweep");
@@ -75,10 +101,18 @@ pub async fn run_daemon(config: &mut Config) -> anyhow::Result<()> {
             }
 
             _ = sync_tick.tick() => {
+                // Sync raw findings
                 match sync::sync_findings(config, &conn).await {
-                    Ok(true) => info!("sync completed"),
+                    Ok(true) => info!("findings sync completed"),
                     Ok(false) => {} // Nothing to sync or transient error
-                    Err(e) => error!(error = %e, "sync error"),
+                    Err(e) => error!(error = %e, "findings sync error"),
+                }
+
+                // Sync device inventory (only changed/new devices)
+                match sync::sync_devices(config, &device_inventory).await {
+                    Ok(true) => info!("device inventory sync completed"),
+                    Ok(false) => {} // Nothing to sync
+                    Err(e) => error!(error = %e, "device inventory sync error"),
                 }
             }
 
