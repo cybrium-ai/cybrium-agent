@@ -79,3 +79,83 @@ jobs:
           files: |
             cybrium-agent-*
             checksums-sha256.txt
+
+      # ── Auto-publish Homebrew formula to cybrium-ai/homebrew-cli ──
+      - name: Resolve version
+        id: ver
+        run: echo "tag=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract per-platform SHA256s
+        id: sums
+        run: |
+          {
+            echo "darwin_arm64_sha=$(awk '/cybrium-agent-darwin-arm64$/  {print $1}' checksums-sha256.txt)"
+            echo "darwin_amd64_sha=$(awk '/cybrium-agent-darwin-amd64$/  {print $1}' checksums-sha256.txt)"
+            echo "linux_arm64_sha=$(awk  '/cybrium-agent-linux-arm64$/   {print $1}' checksums-sha256.txt)"
+            echo "linux_amd64_sha=$(awk  '/cybrium-agent-linux-amd64$/   {print $1}' checksums-sha256.txt)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: cybrium-ai/homebrew-cli
+          token:      ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path:       homebrew-cli
+
+      - name: Render + commit Formula/cybrium-agent.rb
+        run: |
+          VERSION="${{ steps.ver.outputs.tag }}"
+          BASE="https://github.com/cybrium-ai/cybrium-agent/releases/download/v${VERSION}"
+          mkdir -p homebrew-cli/Formula
+          cat > homebrew-cli/Formula/cybrium-agent.rb <<RUBY
+          class CybriumAgent < Formula
+            desc     "Cybrium on-premise security agent — sensor orchestration + platform sync"
+            homepage "https://github.com/cybrium-ai/cybrium-agent"
+            license  "Apache-2.0"
+            version  "${VERSION}"
+
+            on_macos do
+              on_arm do
+                url    "${BASE}/cybrium-agent-darwin-arm64"
+                sha256 "${{ steps.sums.outputs.darwin_arm64_sha }}"
+              end
+              on_intel do
+                url    "${BASE}/cybrium-agent-darwin-amd64"
+                sha256 "${{ steps.sums.outputs.darwin_amd64_sha }}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url    "${BASE}/cybrium-agent-linux-arm64"
+                sha256 "${{ steps.sums.outputs.linux_arm64_sha }}"
+              end
+              on_intel do
+                url    "${BASE}/cybrium-agent-linux-amd64"
+                sha256 "${{ steps.sums.outputs.linux_amd64_sha }}"
+              end
+            end
+
+            def install
+              if OS.mac? && Hardware::CPU.arm?
+                bin.install "cybrium-agent-darwin-arm64" => "cybrium-agent"
+              elsif OS.mac?
+                bin.install "cybrium-agent-darwin-amd64" => "cybrium-agent"
+              elsif OS.linux? && Hardware::CPU.arm?
+                bin.install "cybrium-agent-linux-arm64" => "cybrium-agent"
+              else
+                bin.install "cybrium-agent-linux-amd64" => "cybrium-agent"
+              end
+            end
+
+            test do
+              assert_match "cybrium-agent", shell_output("#{bin}/cybrium-agent version")
+            end
+          end
+          RUBY
+          cd homebrew-cli
+          git config user.name  "cybrium-bot"
+          git config user.email "bot@cybrium.ai"
+          git add Formula/cybrium-agent.rb
+          git commit -m "cybrium-agent: bump to v${VERSION}" || echo "no changes"
+          git push
