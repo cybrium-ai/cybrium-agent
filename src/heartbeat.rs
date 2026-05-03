@@ -1,4 +1,6 @@
 use crate::config::Config;
+use crate::hardware::generate_fingerprint;
+use crate::hardware_rot::{detect as detect_rot, RootOfTrust};
 use crate::sensors::SensorInfo;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
@@ -10,6 +12,15 @@ struct HeartbeatRequest {
     sensors_active: Vec<String>,
     uptime_seconds: u64,
     buffer_size: usize,
+    /// Stable tamper-signal hash. Backend records first-seen and alerts
+    /// on change. Same model cydevice uses on the device-posture path.
+    fingerprint: String,
+    /// Hardware root-of-trust facts. Backend stores these alongside the
+    /// fingerprint and surfaces them on the device dashboard.
+    root_of_trust: RootOfTrust,
+    /// Agent's running version — lets the platform know which fleet
+    /// members are out of date for staged-rollout decisions.
+    agent_version: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,12 +55,18 @@ pub async fn send_heartbeat(
         .map(|s| s.name.clone())
         .collect();
 
+    let rot = detect_rot();
+    let fingerprint = generate_fingerprint(&config.hardware_id, &rot);
+
     let body = HeartbeatRequest {
         license_key: config.license_key.clone(),
         hardware_id: config.hardware_id.clone(),
         sensors_active: active_sensors,
         uptime_seconds,
         buffer_size,
+        fingerprint,
+        root_of_trust: rot,
+        agent_version: env!("CARGO_PKG_VERSION").to_string(),
     };
 
     let url = format!("{}/api/agent/heartbeat/", config.platform_url);

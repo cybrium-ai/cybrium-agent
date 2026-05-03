@@ -54,11 +54,12 @@ pub fn install_service() -> anyhow::Result<()> {
     let binary = std::env::current_exe()?;
     let target = Path::new("/usr/local/bin/cybrium-agent");
     if binary != target {
+        println!("Note: the agent binary should be at {}.", target.display());
         println!(
-            "Note: the agent binary should be at {}.",
+            "  Copy it with: sudo cp {} {}",
+            binary.display(),
             target.display()
         );
-        println!("  Copy it with: sudo cp {} {}", binary.display(), target.display());
     }
 
     #[cfg(target_os = "linux")]

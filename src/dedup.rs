@@ -158,8 +158,11 @@ impl DeviceInventory {
                 let ports_changed = old_ports != ports_json;
                 let fingerprint_changed = old_fingerprint != device.fingerprint;
 
-                let changed =
-                    ip_changed || hostname_changed || protocols_changed || ports_changed || fingerprint_changed;
+                let changed = ip_changed
+                    || hostname_changed
+                    || protocols_changed
+                    || ports_changed
+                    || fingerprint_changed;
 
                 if changed {
                     debug!(
@@ -324,13 +327,16 @@ impl DeviceInventory {
     /// Remove devices that haven't been seen in the specified number of hours.
     pub fn prune_stale(&self, older_than_hours: u64) -> anyhow::Result<usize> {
         let cutoff = (Utc::now() - chrono::Duration::hours(older_than_hours as i64)).to_rfc3339();
-        let deleted = self.db.execute(
-            "DELETE FROM devices WHERE last_seen < ?1",
-            params![cutoff],
-        )?;
+        let deleted = self
+            .db
+            .execute("DELETE FROM devices WHERE last_seen < ?1", params![cutoff])?;
 
         if deleted > 0 {
-            info!(pruned = deleted, hours = older_than_hours, "pruned stale devices");
+            info!(
+                pruned = deleted,
+                hours = older_than_hours,
+                "pruned stale devices"
+            );
         }
 
         Ok(deleted)
@@ -346,11 +352,11 @@ impl DeviceInventory {
             [],
             |r| r.get(0),
         )?;
-        let synced: i64 = self.db.query_row(
-            "SELECT COUNT(*) FROM devices WHERE synced = 1",
-            [],
-            |r| r.get(0),
-        )?;
+        let synced: i64 =
+            self.db
+                .query_row("SELECT COUNT(*) FROM devices WHERE synced = 1", [], |r| {
+                    r.get(0)
+                })?;
 
         Ok(DeviceStats {
             total: total as usize,
@@ -436,7 +442,10 @@ pub fn extract_devices_from_findings(findings: &[crate::sensors::Finding]) -> Ve
         ));
     }
 
-    debug!(count = devices.len(), "extracted device records from findings");
+    debug!(
+        count = devices.len(),
+        "extracted device records from findings"
+    );
     devices
 }
 

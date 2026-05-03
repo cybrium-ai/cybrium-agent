@@ -1,9 +1,9 @@
 use crate::buffer;
 use crate::config::Config;
 use crate::dedup::{self, DeviceInventory};
+use crate::heartbeat;
 use crate::sensors;
 use crate::sync;
-use crate::heartbeat;
 use std::time::Instant;
 use tokio::signal;
 use tokio::time::{interval, Duration};
@@ -32,12 +32,13 @@ pub async fn run_daemon(config: &mut Config) -> anyhow::Result<()> {
 
     if active_count == 0 {
         warn!("no sensors found in PATH — agent will run but collect no data");
-        warn!("install at least one Cybrium sensor: cysense, cyguard, cyprobe, cyweb, cyscan, cymail");
+        warn!(
+            "install at least one Cybrium sensor: cysense, cyguard, cyprobe, cyweb, cyscan, cymail"
+        );
     } else {
         info!(
             sensors = active_count,
-            "discovered {} active sensor(s)",
-            active_count
+            "discovered {} active sensor(s)", active_count
         );
         for s in &available_sensors {
             if s.available {

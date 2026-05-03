@@ -1,6 +1,6 @@
 [package]
 name = "cybrium-agent"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Cybrium AI <eng@cybrium.ai>"]
 description = "Cybrium on-premise security agent — collects sensor data and syncs to the platform"
@@ -12,7 +12,7 @@ tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking"], default-features = false }
 rusqlite = { version = "0.31", features = ["bundled"] }
 sha2 = "0.10"
 hex = "0.4"
@@ -24,6 +24,9 @@ uuid = { version = "1", features = ["v4"] }
 sysinfo = "0.30"
 anyhow = "1"
 libc = "0.2"
+# Self-update: pulls binaries from GitHub releases and atomically replaces
+# the running executable. rustls-tls feature avoids OpenSSL system dep.
+self_update = { version = "0.41", default-features = false, features = ["rustls", "compression-flate2", "archive-tar", "archive-zip"] }
 
 [profile.release]
 opt-level = "z"

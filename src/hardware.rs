@@ -1,6 +1,29 @@
+use crate::hardware_rot::RootOfTrust;
 use sha2::{Digest, Sha256};
 use sysinfo::System;
 use tracing::debug;
+
+/// Compute a tamper-signal fingerprint for this host.
+///
+/// SHA256 over `(hardware_id | rot.kind | rot.vendor | rot.present)`.
+/// Distinct from `hardware_id` itself so that adopting the fingerprint
+/// does not invalidate existing activations: the agent continues to send
+/// the same `hardware_id` it has always sent, plus the new fingerprint
+/// as an additional field.
+///
+/// Stable across reboots; changes only on hardware swap, OS reinstall,
+/// or firmware tampering — same trigger conditions cydevice uses.
+pub fn generate_fingerprint(hardware_id: &str, rot: &RootOfTrust) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(hardware_id.as_bytes());
+    hasher.update(b"|");
+    hasher.update(rot.kind.as_str().as_bytes());
+    hasher.update(b"|");
+    hasher.update(rot.vendor.as_bytes());
+    hasher.update(b"|");
+    hasher.update(if rot.present { b"1" } else { b"0" });
+    hex::encode(hasher.finalize())
+}
 
 /// Generate a deterministic hardware fingerprint.
 /// SHA256(mac_address + cpu_brand + host_name)
@@ -86,6 +109,7 @@ fn get_hostname() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hardware_rot::{RootOfTrust, RootOfTrustKind};
 
     #[test]
     fn hardware_id_is_deterministic() {
@@ -93,5 +117,43 @@ mod tests {
         let id2 = generate_hardware_id();
         assert_eq!(id1, id2);
         assert_eq!(id1.len(), 64); // SHA256 hex = 64 chars
+    }
+
+    #[test]
+    fn fingerprint_is_deterministic_and_hex() {
+        let rot = RootOfTrust {
+            kind: RootOfTrustKind::Tpm20,
+            vendor: "INTC".to_string(),
+            present: true,
+        };
+        let f1 = generate_fingerprint("abc", &rot);
+        let f2 = generate_fingerprint("abc", &rot);
+        assert_eq!(f1, f2);
+        assert_eq!(f1.len(), 64);
+        assert!(f1.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn fingerprint_changes_on_rot_difference() {
+        let rot_a = RootOfTrust {
+            kind: RootOfTrustKind::Tpm20,
+            vendor: "INTC".into(),
+            present: true,
+        };
+        let rot_b = RootOfTrust {
+            kind: RootOfTrustKind::Tpm20,
+            vendor: "STM ".into(),
+            present: true,
+        };
+        let rot_c = RootOfTrust {
+            kind: RootOfTrustKind::None,
+            vendor: "".into(),
+            present: false,
+        };
+        let f_a = generate_fingerprint("xyz", &rot_a);
+        let f_b = generate_fingerprint("xyz", &rot_b);
+        let f_c = generate_fingerprint("xyz", &rot_c);
+        assert_ne!(f_a, f_b);
+        assert_ne!(f_a, f_c);
     }
 }

@@ -29,11 +29,7 @@ pub async fn activate(config: &mut Config) -> anyhow::Result<()> {
     info!("activating agent with platform at {}", url);
 
     let client = reqwest::Client::new();
-    let resp = client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await?;
+    let resp = client.post(&url).json(&body).send().await?;
 
     let status = resp.status();
     if !status.is_success() {
@@ -83,9 +79,7 @@ fn decode_jwt_expiry(token: &str) -> Option<String> {
         3 => format!("{}=", payload),
         _ => payload.to_string(),
     };
-    let decoded = padded
-        .replace('-', "+")
-        .replace('_', "/");
+    let decoded = padded.replace('-', "+").replace('_', "/");
 
     use std::io::Read;
     let mut decoder = base64_decode(&decoded)?;
@@ -101,22 +95,31 @@ fn decode_jwt_expiry(token: &str) -> Option<String> {
 
 /// Simple base64 decoder (standard alphabet).
 fn base64_decode(input: &str) -> Option<std::io::Cursor<Vec<u8>>> {
-    static TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    static TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     let mut buf = Vec::new();
     let bytes: Vec<u8> = input.bytes().filter(|&b| b != b'=').collect();
 
     let mut i = 0;
     while i < bytes.len() {
-        let lookup = |b: u8| -> Option<u8> {
-            TABLE.iter().position(|&c| c == b).map(|p| p as u8)
-        };
+        let lookup = |b: u8| -> Option<u8> { TABLE.iter().position(|&c| c == b).map(|p| p as u8) };
 
         let b0 = lookup(bytes[i])?;
-        let b1 = if i + 1 < bytes.len() { lookup(bytes[i + 1])? } else { 0 };
-        let b2 = if i + 2 < bytes.len() { lookup(bytes[i + 2])? } else { 0 };
-        let b3 = if i + 3 < bytes.len() { lookup(bytes[i + 3])? } else { 0 };
+        let b1 = if i + 1 < bytes.len() {
+            lookup(bytes[i + 1])?
+        } else {
+            0
+        };
+        let b2 = if i + 2 < bytes.len() {
+            lookup(bytes[i + 2])?
+        } else {
+            0
+        };
+        let b3 = if i + 3 < bytes.len() {
+            lookup(bytes[i + 3])?
+        } else {
+            0
+        };
 
         buf.push((b0 << 2) | (b1 >> 4));
         if i + 2 < bytes.len() {

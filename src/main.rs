@@ -4,10 +4,12 @@ mod config;
 mod daemon;
 mod dedup;
 mod hardware;
+mod hardware_rot;
 mod heartbeat;
 mod sensors;
 mod service;
 mod sync;
+mod update;
 
 use clap::{Parser, Subcommand};
 use config::Config;
@@ -55,6 +57,18 @@ enum Commands {
     /// Remove the system service
     UninstallService,
 
+    /// Check for / apply a new release. By default downloads & applies
+    /// the latest stable release. Pass `--check` to only report whether
+    /// an update is available.
+    Update {
+        /// Only check; don't download or apply.
+        #[arg(long)]
+        check: bool,
+        /// Release channel: stable (default) or beta.
+        #[arg(long, default_value = "stable")]
+        channel: String,
+    },
+
     /// Print version information
     Version,
 }
@@ -83,6 +97,7 @@ async fn main() {
         Commands::Stop => cmd_stop(),
         Commands::InstallService => service::install_service(),
         Commands::UninstallService => service::uninstall_service(),
+        Commands::Update { check, channel } => cmd_update(check, channel).await,
         Commands::Version => {
             cmd_version();
             Ok(())
@@ -115,15 +130,11 @@ async fn cmd_activate(license: String, platform_url: String) -> anyhow::Result<(
 
 async fn cmd_start() -> anyhow::Result<()> {
     let mut cfg = Config::load().ok_or_else(|| {
-        anyhow::anyhow!(
-            "agent not configured. Run `cybrium-agent activate --license <KEY>` first."
-        )
+        anyhow::anyhow!("agent not configured. Run `cybrium-agent activate --license <KEY>` first.")
     })?;
 
     if !cfg.is_activated() {
-        anyhow::bail!(
-            "agent not activated. Run `cybrium-agent activate --license <KEY>` first."
-        );
+        anyhow::bail!("agent not activated. Run `cybrium-agent activate --license <KEY>` first.");
     }
 
     // Write PID file for stop command
@@ -148,6 +159,11 @@ fn cmd_status() -> anyhow::Result<()> {
         }
     };
 
+    // Detect hardware root of trust each time so we surface the *current*
+    // state, not whatever was cached on activation.
+    let rot = hardware_rot::detect();
+    let fingerprint = hardware::generate_fingerprint(&cfg.hardware_id, &rot);
+
     println!("Cybrium Agent Status");
     println!("--------------------");
     println!(
@@ -155,15 +171,28 @@ fn cmd_status() -> anyhow::Result<()> {
         if cfg.is_activated() { "yes" } else { "no" }
     );
     println!("  Hardware ID:  {}", cfg.hardware_id);
+    println!(
+        "  Fingerprint:  {}…  ({})",
+        &fingerprint[..16],
+        fingerprint.len()
+    );
+    println!(
+        "  Root of trust: {}{}{}",
+        rot.kind.as_str(),
+        if rot.vendor.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", rot.vendor)
+        },
+        if rot.present {
+            " · present"
+        } else {
+            " · absent"
+        },
+    );
     println!("  Platform URL: {}", cfg.platform_url);
-    println!(
-        "  Sync interval: {}s",
-        cfg.sync_interval_secs
-    );
-    println!(
-        "  Scan interval: {}s",
-        cfg.scan_interval_secs
-    );
+    println!("  Sync interval: {}s", cfg.sync_interval_secs);
+    println!("  Scan interval: {}s", cfg.scan_interval_secs);
 
     if let Some(at) = &cfg.activated_at {
         println!("  Activated at: {}", at);
@@ -179,7 +208,11 @@ fn cmd_status() -> anyhow::Result<()> {
                 let running = is_process_running(pid);
                 println!(
                     "  Running:      {}",
-                    if running { "yes" } else { "no (stale PID file)" }
+                    if running {
+                        "yes"
+                    } else {
+                        "no (stale PID file)"
+                    }
                 );
             }
         }
@@ -255,7 +288,10 @@ fn cmd_stop() -> anyhow::Result<()> {
 
     #[cfg(not(unix))]
     {
-        println!("Stop is only supported on Unix systems. Kill process {} manually.", pid);
+        println!(
+            "Stop is only supported on Unix systems. Kill process {} manually.",
+            pid
+        );
     }
 
     // Wait briefly then check
@@ -274,6 +310,38 @@ fn cmd_version() {
     println!("cybrium-agent {}", VERSION);
     println!("Cybrium AI — on-premise security agent");
     println!("https://cybrium.ai");
+}
+
+async fn cmd_update(check_only: bool, channel_arg: String) -> anyhow::Result<()> {
+    let channel = update::Channel::from_arg(&channel_arg)?;
+
+    if check_only {
+        let res = update::check_async(channel).await?;
+        if res.update_available {
+            println!(
+                "Update available: {} → {} (channel: {})",
+                res.current_version,
+                res.latest_version,
+                channel.as_str()
+            );
+        } else {
+            println!(
+                "Up to date: cybrium-agent {} (channel: {})",
+                res.current_version,
+                channel.as_str()
+            );
+        }
+        return Ok(());
+    }
+
+    println!("cybrium-agent self-update — channel: {}", channel.as_str());
+    let new_version = update::apply_async(channel).await?;
+    println!("Self-update complete. Now running version: {}", new_version);
+    println!();
+    println!("If the agent is running under systemd / launchd / a Windows service,");
+    println!("the supervisor will restart the new binary automatically. If you");
+    println!("started it manually with `cybrium-agent start`, restart it.");
+    Ok(())
 }
 
 /// Check if a process with the given PID is running.

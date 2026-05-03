@@ -4,12 +4,12 @@ use tracing::{debug, error, info, warn};
 
 /// Known Cybrium sensor binaries.
 const KNOWN_SENSORS: &[&str] = &[
-    "cysense",  // Network traffic analysis
-    "cyguard",  // Endpoint protection scan
-    "cyprobe",  // Network device discovery
-    "cyweb",    // Web application scan
-    "cyscan",   // SAST / code scan
-    "cymail",   // Email security scan
+    "cysense", // Network traffic analysis
+    "cyguard", // Endpoint protection scan
+    "cyprobe", // Network device discovery
+    "cyweb",   // Web application scan
+    "cyscan",  // SAST / code scan
+    "cymail",  // Email security scan
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,18 +67,13 @@ pub fn discover_sensors(enabled: &[String]) -> Vec<SensorInfo> {
 
 /// Check if a sensor binary exists and get its version.
 fn check_sensor(name: &str) -> Option<String> {
-    let output = Command::new(name)
-        .arg("--version")
-        .output()
-        .ok()?;
+    let output = Command::new(name).arg("--version").output().ok()?;
 
     if !output.status.success() {
         return None;
     }
 
-    let version = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .to_string();
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     Some(if version.is_empty() {
         "unknown".to_string()
@@ -106,7 +101,11 @@ pub fn run_sensor(sensor_type: &str) -> Vec<Finding> {
 
     match result {
         Ok(findings) => {
-            info!(sensor = sensor_type, count = findings.len(), "sensor completed");
+            info!(
+                sensor = sensor_type,
+                count = findings.len(),
+                "sensor completed"
+            );
             findings
         }
         Err(e) => {
@@ -135,7 +134,15 @@ fn run_cysense() -> anyhow::Result<Vec<Finding>> {
     // cysense listens on a network interface for traffic anomalies
     let interface = detect_default_interface();
     let output = Command::new("cysense")
-        .args(["listen", "--interface", &interface, "--duration", "30", "--format", "json"])
+        .args([
+            "listen",
+            "--interface",
+            &interface,
+            "--duration",
+            "30",
+            "--format",
+            "json",
+        ])
         .output()?;
 
     parse_json_findings("cysense", &output.stdout)
@@ -155,9 +162,12 @@ fn run_cyprobe() -> anyhow::Result<Vec<Finding>> {
     let output = Command::new("cyprobe")
         .args([
             "discover",
-            "--interface", &interface,
-            "--targets", &subnet,
-            "--format", "json",
+            "--interface",
+            &interface,
+            "--targets",
+            &subnet,
+            "--format",
+            "json",
         ])
         .output()?;
 
@@ -239,18 +249,12 @@ fn detect_default_interface() -> String {
 
     #[cfg(target_os = "macos")]
     {
-        if let Ok(output) = Command::new("route")
-            .args(["get", "default"])
-            .output()
-        {
+        if let Ok(output) = Command::new("route").args(["get", "default"]).output() {
             let text = String::from_utf8_lossy(&output.stdout);
             for line in text.lines() {
                 let trimmed = line.trim();
                 if trimmed.starts_with("interface:") {
-                    return trimmed
-                        .trim_start_matches("interface:")
-                        .trim()
-                        .to_string();
+                    return trimmed.trim_start_matches("interface:").trim().to_string();
                 }
             }
         }
@@ -288,10 +292,7 @@ fn detect_local_subnet() -> String {
 
     #[cfg(target_os = "macos")]
     {
-        if let Ok(output) = Command::new("route")
-            .args(["get", "default"])
-            .output()
-        {
+        if let Ok(output) = Command::new("route").args(["get", "default"]).output() {
             let text = String::from_utf8_lossy(&output.stdout);
             for line in text.lines() {
                 let trimmed = line.trim();
