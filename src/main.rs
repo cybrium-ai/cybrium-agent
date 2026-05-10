@@ -9,6 +9,7 @@ mod heartbeat;
 mod sensors;
 mod service;
 mod sync;
+mod telemetry;
 mod update;
 
 use clap::{Parser, Subcommand};
@@ -71,6 +72,53 @@ enum Commands {
 
     /// Print version information
     Version,
+
+    /// Clear the agent's activation state (license + tokens). The next
+    /// `activate` will start fresh.
+    Deactivate,
+
+    /// Read or write a single config field.
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+
+    /// Manage the hardened telemetry channel. See `cybrium-agent telemetry
+    /// --help`.
+    Telemetry {
+        #[command(subcommand)]
+        action: TelemetryAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Print a config key's current value.
+    Get {
+        /// Key name, e.g. sync_interval_secs, scan_interval_secs,
+        /// platform_url, sensors_enabled.
+        key: String,
+    },
+    /// Set a config key. Type is inferred from the field — integers for
+    /// intervals, comma-separated list for sensors_enabled, string for url.
+    Set {
+        key: String,
+        value: String,
+    },
+    /// Print the whole config (with secrets redacted).
+    Show,
+}
+
+#[derive(Subcommand)]
+enum TelemetryAction {
+    /// Activate a hardened telemetry token (cyat_<slug>_<secret>). Verifies
+    /// the token via a handshake before persisting state.
+    Activate {
+        /// Token issued by the platform UI (Settings → Agents → Telemetry).
+        token: String,
+    },
+    /// Clear the telemetry token without affecting the license/agent_token.
+    Deactivate,
 }
 
 #[tokio::main]
@@ -102,6 +150,12 @@ async fn main() {
             cmd_version();
             Ok(())
         }
+        Commands::Deactivate => cmd_deactivate(),
+        Commands::Config { action } => cmd_config(action),
+        Commands::Telemetry { action } => match action {
+            TelemetryAction::Activate { token } => telemetry::activate(token).await,
+            TelemetryAction::Deactivate => telemetry::deactivate(),
+        },
     };
 
     if let Err(e) = result {
@@ -341,6 +395,100 @@ async fn cmd_update(check_only: bool, channel_arg: String) -> anyhow::Result<()>
     println!("If the agent is running under systemd / launchd / a Windows service,");
     println!("the supervisor will restart the new binary automatically. If you");
     println!("started it manually with `cybrium-agent start`, restart it.");
+    Ok(())
+}
+
+/// v0.2.0 — wipe activation state.
+fn cmd_deactivate() -> anyhow::Result<()> {
+    let Some(mut cfg) = Config::load() else {
+        anyhow::bail!("no config file at {} — nothing to deactivate", Config::file_path().display());
+    };
+    cfg.license_key = String::new();
+    cfg.agent_token = None;
+    cfg.activated_at = None;
+    cfg.telemetry_token = None;
+    cfg.telemetry_tenant_slug = None;
+    cfg.save()?;
+    println!("Agent deactivated. License, agent token, and telemetry token cleared.");
+    println!("Run `cybrium-agent activate --license <jwt>` to re-enroll.");
+    Ok(())
+}
+
+/// v0.2.0 — get/set a single config field, or show the whole config.
+fn cmd_config(action: ConfigAction) -> anyhow::Result<()> {
+    let mut cfg = Config::load().unwrap_or_default();
+    match action {
+        ConfigAction::Get { key } => {
+            let value = match key.as_str() {
+                "sync_interval_secs" => cfg.sync_interval_secs.to_string(),
+                "scan_interval_secs" => cfg.scan_interval_secs.to_string(),
+                "platform_url" => cfg.platform_url.clone(),
+                "sensors_enabled" => cfg.sensors_enabled.join(","),
+                "telemetry_tenant_slug" => cfg.telemetry_tenant_slug.clone().unwrap_or_default(),
+                other => anyhow::bail!(
+                    "unknown key `{}` — supported: sync_interval_secs, scan_interval_secs, platform_url, sensors_enabled, telemetry_tenant_slug",
+                    other
+                ),
+            };
+            println!("{}", value);
+        }
+        ConfigAction::Set { key, value } => {
+            match key.as_str() {
+                "sync_interval_secs" => {
+                    cfg.sync_interval_secs = value
+                        .parse()
+                        .map_err(|_| anyhow::anyhow!("sync_interval_secs must be a positive integer"))?;
+                }
+                "scan_interval_secs" => {
+                    cfg.scan_interval_secs = value
+                        .parse()
+                        .map_err(|_| anyhow::anyhow!("scan_interval_secs must be a positive integer"))?;
+                }
+                "platform_url" => {
+                    // Allow override for the legacy /api channel only —
+                    // the telemetry endpoint base is hardcoded for security
+                    // (see config::TELEMETRY_BASE_DOMAIN).
+                    if !(value.starts_with("http://") || value.starts_with("https://")) {
+                        anyhow::bail!("platform_url must start with http:// or https://");
+                    }
+                    cfg.platform_url = value;
+                }
+                "sensors_enabled" => {
+                    cfg.sensors_enabled = value
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                }
+                "telemetry_token" | "license_key" | "agent_token" | "telemetry_tenant_slug" => {
+                    anyhow::bail!(
+                        "`{}` is set via `activate` / `telemetry activate` / `deactivate` — not via `config set`",
+                        key
+                    );
+                }
+                other => anyhow::bail!("unknown key `{}`", other),
+            }
+            cfg.save()?;
+            println!("Saved.");
+        }
+        ConfigAction::Show => {
+            // Print with secrets redacted.
+            let mut redacted = cfg.clone();
+            if !redacted.license_key.is_empty() {
+                redacted.license_key = format!("<JWT, {} chars>", redacted.license_key.len());
+            }
+            if let Some(t) = &redacted.agent_token {
+                redacted.agent_token = Some(format!("<{} chars>", t.len()));
+            }
+            if let Some(t) = &redacted.telemetry_token {
+                // Show only the prefix portion (cyat_<slug>) which is visible
+                // by design — secret portion redacted.
+                let prefix_end = t.rfind('_').unwrap_or(t.len());
+                redacted.telemetry_token = Some(format!("{}_<redacted>", &t[..prefix_end]));
+            }
+            println!("{}", serde_json::to_string_pretty(&redacted)?);
+        }
+    }
     Ok(())
 }
 
