@@ -3,6 +3,18 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+/// HARDCODED — the only domain the agent will ever send telemetry to.
+///
+/// This is deliberately NOT configurable. If we let operators override it via
+/// config.json or `--platform-url`, an attacker who tricks the operator into
+/// typing a typosquat (e.g. `cybriurn.ai` with rn-for-m) can siphon telemetry.
+/// Pinning the base domain in the binary forces any malicious redirect to
+/// require modifying the binary itself, which is a much higher bar.
+///
+/// Build variants for staging/dev live in separate binaries with a different
+/// constant — never via runtime config.
+pub const TELEMETRY_BASE_DOMAIN: &str = "telemetry.cybrium.ai";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub license_key: String,
@@ -13,6 +25,17 @@ pub struct Config {
     pub scan_interval_secs: u64,
     pub sensors_enabled: Vec<String>,
     pub activated_at: Option<DateTime<Utc>>,
+
+    /// v0.2.0 — hardened telemetry token. Separate from `agent_token`
+    /// (which is the legacy general-purpose token); this one is bound to
+    /// a specific tenant via its embedded slug and is only ever sent to
+    /// `<slug>.{TELEMETRY_BASE_DOMAIN}/v1/ingest`.
+    #[serde(default)]
+    pub telemetry_token: Option<String>,
+    /// Cached tenant slug extracted from the telemetry token at activation
+    /// time. Used to compute the endpoint without re-parsing on every send.
+    #[serde(default)]
+    pub telemetry_tenant_slug: Option<String>,
 }
 
 impl Default for Config {
@@ -33,6 +56,8 @@ impl Default for Config {
                 "cymail".into(),
             ],
             activated_at: None,
+            telemetry_token: None,
+            telemetry_tenant_slug: None,
         }
     }
 }

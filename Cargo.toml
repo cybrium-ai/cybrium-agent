@@ -1,6 +1,6 @@
 [package]
 name = "cybrium-agent"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Cybrium AI <eng@cybrium.ai>"]
 description = "Cybrium on-premise security agent — collects sensor data and syncs to the platform"
